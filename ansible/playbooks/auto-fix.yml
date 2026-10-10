@@ -1,0 +1,194 @@
+---
+###############################################################################
+# ABC-Technologies
+# Auto Fix Playbook
+#
+# Purpose:
+# Prepare the Kubernetes environment before deployment.
+# Safe to execute multiple times.
+#
+###############################################################################
+
+- name: Auto Fix Environment
+
+  hosts: kubernetes_cluster
+
+  gather_facts: false
+
+  become: true
+
+  vars_files:
+    - ../group_vars/all.yml
+
+  tasks:
+
+###############################################################################
+# Display Configuration
+###############################################################################
+
+    - name: Display Deployment Information
+
+      debug:
+        msg:
+          - "Application : {{ app_name }}"
+          - "Namespace   : {{ k8s_namespace }}"
+          - "Environment : {{ deployment_environment }}"
+
+###############################################################################
+# Ensure Temporary Directory
+###############################################################################
+
+    - name: Create Temporary Directory
+
+      file:
+        path: "{{ tmp_directory }}"
+        state: directory
+        mode: "0755"
+
+###############################################################################
+# Ensure Backup Directory
+###############################################################################
+
+    - name: Create Backup Directory
+
+      file:
+        path: "{{ backup_directory }}"
+        state: directory
+        mode: "0755"
+
+###############################################################################
+# Ensure Log Directory
+###############################################################################
+
+    - name: Create Log Directory
+
+      file:
+        path: "{{ log_directory }}"
+        state: directory
+        mode: "0755"
+
+###############################################################################
+# Verify kubectl
+###############################################################################
+
+    - name: Check kubectl Binary
+
+      stat:
+        path: "{{ kubectl_binary }}"
+
+      register: kubectl_status
+
+      changed_when: false
+
+    - name: Fail if kubectl Missing
+
+      fail:
+        msg: "kubectl not found at {{ kubectl_binary }}"
+
+      when: not kubectl_status.stat.exists
+
+###############################################################################
+# Verify kubeconfig
+###############################################################################
+
+    - name: Check kubeconfig
+
+      stat:
+        path: "{{ kubeconfig }}"
+
+      register: kubeconfig_status
+
+      changed_when: false
+
+    - name: Fail if kubeconfig Missing
+
+      fail:
+        msg: "kubeconfig not found at {{ kubeconfig }}"
+
+      when: not kubeconfig_status.stat.exists
+
+###############################################################################
+# Fix kubeconfig Permission
+###############################################################################
+
+    - name: Set kubeconfig Permission
+
+      file:
+        path: "{{ kubeconfig }}"
+        owner: "{{ ssh_user }}"
+        mode: "0600"
+
+###############################################################################
+# Verify Namespace
+###############################################################################
+
+    - name: Check Namespace
+
+      command:
+        argv:
+          - "{{ kubectl_binary }}"
+          - get
+          - namespace
+          - "{{ k8s_namespace }}"
+
+      environment:
+        KUBECONFIG: "{{ kubeconfig }}"
+
+      register: namespace_check
+
+      ignore_errors: true
+
+      changed_when: false
+
+###############################################################################
+# Create Namespace
+###############################################################################
+
+    - name: Create Namespace
+
+      command:
+        argv:
+          - "{{ kubectl_binary }}"
+          - create
+          - namespace
+          - "{{ k8s_namespace }}"
+
+      environment:
+        KUBECONFIG: "{{ kubeconfig }}"
+
+      when: namespace_check.rc != 0
+
+###############################################################################
+# Verify Cluster Connectivity
+###############################################################################
+
+    - name: Verify Kubernetes Cluster
+
+      command:
+        argv:
+          - "{{ kubectl_binary }}"
+          - cluster-info
+
+      environment:
+        KUBECONFIG: "{{ kubeconfig }}"
+
+      register: cluster_info
+
+      changed_when: false
+
+###############################################################################
+# Complete
+###############################################################################
+
+    - name: Auto Fix Completed
+
+      debug:
+        msg:
+          - "Temporary Directory : OK"
+          - "Backup Directory    : OK"
+          - "Log Directory       : OK"
+          - "kubectl             : OK"
+          - "kubeconfig          : OK"
+          - "Namespace           : {{ k8s_namespace }}"
+          - "Cluster             : Reachable"
+          - "Environment Ready for Deployment"

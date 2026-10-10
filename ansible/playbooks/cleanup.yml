@@ -1,0 +1,195 @@
+---
+###############################################################################
+# ABC-Technologies
+# Cleanup Playbook
+#
+# Purpose:
+# Cleanup temporary deployment artifacts after a successful deployment.
+#
+###############################################################################
+
+- name: Cleanup Deployment Environment
+
+  hosts: kubernetes_cluster
+
+  gather_facts: false
+
+  become: true
+
+  vars_files:
+    - ../group_vars/all.yml
+
+  tasks:
+
+###############################################################################
+# Display Information
+###############################################################################
+
+    - name: Display Cleanup Information
+
+      debug:
+        msg:
+          - "Application : {{ app_name }}"
+          - "Namespace   : {{ k8s_namespace }}"
+          - "Cleanup     : Starting"
+
+###############################################################################
+# Remove Temporary Directory
+###############################################################################
+
+    - name: Remove Temporary Directory
+
+      file:
+        path: "{{ tmp_directory }}"
+        state: absent
+
+      when: cleanup_tmp_directory
+
+###############################################################################
+# Recreate Working Directories
+###############################################################################
+
+    - name: Recreate Temporary Directory
+
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+
+      loop:
+        - "{{ tmp_directory }}"
+        - "{{ backup_directory }}"
+        - "{{ log_directory }}"
+
+###############################################################################
+# Remove Old Log Files
+###############################################################################
+
+    - name: Find Old Log Files
+
+      find:
+        paths: "{{ log_directory }}"
+        age: 7d
+        recurse: true
+        file_type: file
+
+      register: old_logs
+
+###############################################################################
+# Delete Old Log Files
+###############################################################################
+
+    - name: Delete Old Log Files
+
+      file:
+        path: "{{ item.path }}"
+        state: absent
+
+      loop: "{{ old_logs.files }}"
+
+      when: old_logs.matched > 0
+
+###############################################################################
+# Verify Deployment
+###############################################################################
+
+    - name: Get Deployment
+
+      command:
+        argv:
+          - "{{ kubectl_binary }}"
+          - get
+          - deployment
+          - "{{ deployment_name }}"
+          - "-n"
+          - "{{ k8s_namespace }}"
+
+      environment:
+        KUBECONFIG: "{{ kubeconfig }}"
+
+      register: deployment
+
+      changed_when: false
+
+###############################################################################
+# Verify Pods
+###############################################################################
+
+    - name: Get Pods
+
+      command:
+        argv:
+          - "{{ kubectl_binary }}"
+          - get
+          - pods
+          - "-n"
+          - "{{ k8s_namespace }}"
+
+      environment:
+        KUBECONFIG: "{{ kubeconfig }}"
+
+      register: pods
+
+      changed_when: false
+
+###############################################################################
+# Verify Service
+###############################################################################
+
+    - name: Get Service
+
+      command:
+        argv:
+          - "{{ kubectl_binary }}"
+          - get
+          - svc
+          - "{{ service_name }}"
+          - "-n"
+          - "{{ k8s_namespace }}"
+
+      environment:
+        KUBECONFIG: "{{ kubeconfig }}"
+
+      register: service
+
+      changed_when: false
+
+###############################################################################
+# Verify Ingress
+###############################################################################
+
+    - name: Get Ingress
+
+      command:
+        argv:
+          - "{{ kubectl_binary }}"
+          - get
+          - ingress
+          - "{{ ingress_name }}"
+          - "-n"
+          - "{{ k8s_namespace }}"
+
+      environment:
+        KUBECONFIG: "{{ kubeconfig }}"
+
+      when: ingress_enabled
+
+      register: ingress
+
+      changed_when: false
+
+###############################################################################
+# Summary
+###############################################################################
+
+    - name: Cleanup Complete
+
+      debug:
+        msg:
+          - "Temporary Directory : Clean"
+          - "Backup Directory    : Ready"
+          - "Log Directory       : Ready"
+          - "Deployment          : {{ deployment_name }}"
+          - "Namespace           : {{ k8s_namespace }}"
+          - "Application URL     : {{ application_url }}"
+          - "Cleanup Completed Successfully"

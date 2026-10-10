@@ -1,0 +1,407 @@
+---
+###############################################################################
+# ABC-Technologies
+# Deployment Playbook
+#
+# Purpose:
+# Deploy ABC-Technologies to Kubernetes
+###############################################################################
+
+- name: Deploy ABC-Technologies
+
+  hosts: kubernetes_cluster
+  gather_facts: false
+  become: true
+
+  vars_files:
+    - ../group_vars/all.yml
+
+###############################################################################
+# PRE-TASKS
+###############################################################################
+
+  pre_tasks:
+
+###############################################################################
+# Validate Jenkins Variables
+###############################################################################
+
+    - name: Verify Jenkins workspace variable
+      fail:
+        msg: "workspace variable was not passed from Jenkins."
+      when:
+        - workspace is not defined
+        - workspace | length == 0
+
+###############################################################################
+# Display Deployment Information
+###############################################################################
+
+    - name: Display Deployment Summary
+      debug:
+        msg:
+          - "Application : {{ app_name }}"
+          - "Image       : {{ image }}"
+          - "Namespace   : {{ k8s_namespace }}"
+          - "Environment : {{ deployment_environment }}"
+          - "Workspace   : {{ workspace }}"
+
+###############################################################################
+# TASKS
+###############################################################################
+
+  tasks:
+
+###############################################################################
+# Create Deployment Directory
+###############################################################################
+
+    - name: Create deployment directory
+      file:
+        path: "{{ tmp_directory }}"
+        state: directory
+        mode: "0755"
+
+###############################################################################
+# Remove Old Manifests
+###############################################################################
+
+    - name: Remove previous manifests
+      file:
+        path: "{{ manifest_directory }}"
+        state: absent
+
+###############################################################################
+# Create Manifest Directory
+###############################################################################
+
+    - name: Create manifest directory
+      file:
+        path: "{{ manifest_directory }}"
+        state: directory
+        mode: "0755"
+
+###############################################################################
+# Copy Kubernetes Manifests
+###############################################################################
+
+    - name: Copy Kubernetes manifests
+      copy:
+        src: "{{ workspace }}/kubernetes/"
+        dest: "{{ manifest_directory }}/"
+        mode: preserve
+
+###############################################################################
+# Verify Copied Files
+###############################################################################
+
+    - name: Verify copied manifests
+      command: ls -la "{{ manifest_directory }}"
+      register: manifest_files
+      changed_when: false
+
+    - name: Display copied manifests
+      debug:
+        var: manifest_files.stdout_lines
+
+###############################################################################
+# Replace Docker Image
+###############################################################################
+
+    - name: Replace IMAGE_PLACEHOLDER
+      replace:
+        path: "{{ manifest_directory }}/deployment.yaml"
+        regexp: "IMAGE_PLACEHOLDER"
+        replace: "{{ image }}"
+
+###############################################################################
+# Verify Image Replacement
+###############################################################################
+
+    - name: Verify deployment image
+      shell: |
+        grep "image:" "{{ manifest_directory }}/deployment.yaml"
+      register: deployment_image
+      changed_when: false
+
+    - name: Display deployment image
+      debug:
+        var: deployment_image.stdout_lines
+
+###############################################################################
+# Validate Kubernetes Manifests
+###############################################################################
+
+    - name: Validate Kubernetes manifests
+      command: >
+        {{ kubectl_binary }}
+        apply
+        --dry-run=server
+        -k
+        {{ manifest_directory }}
+      environment:
+        KUBECONFIG: "{{ kubeconfig }}"
+      register: validation_result
+      changed_when: false
+
+    - name: Display validation result
+      debug:
+        var: validation_result.stdout_lines
+
+###############################################################################
+# Deploy Resources
+###############################################################################
+
+    - name: Deploy Kubernetes resources
+      command: >
+        {{ kubectl_binary }}
+        apply
+        -k
+        {{ manifest_directory }}
+      environment:
+        KUBECONFIG: "{{ kubeconfig }}"
+      register: deployment_result
+      changed_when: true
+
+###############################################################################
+# Deployment Output
+###############################################################################
+
+    - name: Display deployment output
+      debug:
+        var: deployment_result.stdout_lines
+
+###############################################################################
+# Wait for Rollout
+###############################################################################
+
+    - name: Wait for deployment rollout
+      command: >
+        {{ kubectl_binary }}
+        rollout status
+        deployment/{{ deployment_name }}
+        -n {{ k8s_namespace }}
+        --timeout={{ rollout_timeout }}
+      environment:
+        KUBECONFIG: "{{ kubeconfig }}"
+      register: rollout_status
+      changed_when: false
+      failed_when: false
+
+    - name: Display rollout status
+      debug:
+        var: rollout_status.stdout_lines
+
+###############################################################################
+# Deployment Diagnostics
+###############################################################################
+
+    - name: Get deployment status
+      command: >
+        {{ kubectl_binary }}
+        get deployment
+        {{ deployment_name }}
+        -n {{ k8s_namespace }}
+      environment:
+        KUBECONFIG: "{{ kubeconfig }}"
+      register: deployment_status
+      changed_when: false
+
+    - name: Display deployment status
+      debug:
+        var: deployment_status.stdout_lines
+
+###############################################################################
+# ReplicaSets
+###############################################################################
+
+    - name: Get ReplicaSets
+      command: >
+        {{ kubectl_binary }}
+        get rs
+        -n {{ k8s_namespace }}
+      environment:
+        KUBECONFIG: "{{ kubeconfig }}"
+      register: rs_status
+      changed_when: false
+
+    - name: Display ReplicaSets
+      debug:
+        var: rs_status.stdout_lines
+
+###############################################################################
+# Pods
+###############################################################################
+
+    - name: Get running pods
+      command: >
+        {{ kubectl_binary }}
+        get pods
+        -n {{ k8s_namespace }}
+        -o wide
+      environment:
+        KUBECONFIG: "{{ kubeconfig }}"
+      register: pod_status
+      changed_when: false
+
+    - name: Display running pods
+      debug:
+        var: pod_status.stdout_lines
+
+###############################################################################
+# Describe Pods (only if rollout failed)
+###############################################################################
+
+    - name: Describe Pods
+      shell: |
+        {{ kubectl_binary }} describe pods \
+        -n {{ k8s_namespace }}
+      environment:
+        KUBECONFIG: "{{ kubeconfig }}"
+      register: pod_describe
+      changed_when: false
+      failed_when: false
+      when: rollout_status.rc != 0
+
+    - name: Display Pod Description
+      debug:
+        var: pod_describe.stdout_lines
+      when: rollout_status.rc != 0
+
+###############################################################################
+# Application Logs
+###############################################################################
+
+    - name: Collect application logs
+      shell: |
+        {{ kubectl_binary }} logs \
+        -n {{ k8s_namespace }} \
+        -l app={{ app_name }} \
+        --all-containers=true \
+        --tail=100
+      environment:
+        KUBECONFIG: "{{ kubeconfig }}"
+      register: pod_logs
+      changed_when: false
+      failed_when: false
+      when: rollout_status.rc != 0
+
+    - name: Display application logs
+      debug:
+        var: pod_logs.stdout_lines
+      when: rollout_status.rc != 0
+
+###############################################################################
+# Fail Pipeline if Rollout Failed
+###############################################################################
+
+    - name: Fail deployment if rollout failed
+      fail:
+        msg: |
+          Deployment rollout failed.
+
+          Review the Jenkins console output above.
+
+          Pod descriptions and logs have been collected automatically.
+      when: rollout_status.rc != 0
+
+###############################################################################
+# Service
+###############################################################################
+
+    - name: Get service
+      command: >
+        {{ kubectl_binary }}
+        get svc
+        {{ service_name }}
+        -n {{ k8s_namespace }}
+      environment:
+        KUBECONFIG: "{{ kubeconfig }}"
+      register: service_status
+      changed_when: false
+
+    - name: Display service
+      debug:
+        var: service_status.stdout_lines
+
+###############################################################################
+# Ingress
+###############################################################################
+
+    - name: Get ingress
+      command: >
+        {{ kubectl_binary }}
+        get ingress
+        {{ ingress_name }}
+        -n {{ k8s_namespace }}
+      environment:
+        KUBECONFIG: "{{ kubeconfig }}"
+      register: ingress_status
+      changed_when: false
+      failed_when: false
+      when: ingress_enabled
+
+    - name: Display ingress
+      debug:
+        var: ingress_status.stdout_lines
+      when: ingress_enabled
+
+###############################################################################
+# Horizontal Pod Autoscaler
+###############################################################################
+
+    - name: Get HPA
+      command: >
+        {{ kubectl_binary }}
+        get hpa
+        -n {{ k8s_namespace }}
+      environment:
+        KUBECONFIG: "{{ kubeconfig }}"
+      register: hpa_status
+      changed_when: false
+      failed_when: false
+      when: hpa_enabled
+
+    - name: Display HPA
+      debug:
+        var: hpa_status.stdout_lines
+      when: hpa_enabled
+
+###############################################################################
+# ServiceMonitor
+###############################################################################
+
+    - name: Get ServiceMonitor
+      command: >
+        {{ kubectl_binary }}
+        get servicemonitor
+        {{ app_name }}
+        -n {{ monitoring_namespace }}
+      environment:
+        KUBECONFIG: "{{ kubeconfig }}"
+      register: servicemonitor_status
+      changed_when: false
+      failed_when: false
+      when: servicemonitor_enabled
+
+    - name: Display ServiceMonitor
+      debug:
+        var: servicemonitor_status.stdout_lines
+      when: servicemonitor_enabled
+
+###############################################################################
+# Deployment Successful
+###############################################################################
+
+    - name: Deployment completed
+      debug:
+        msg:
+          - "========================================"
+          - "ABC-Technologies deployed successfully"
+          - "Namespace : {{ k8s_namespace }}"
+          - "Deployment: {{ deployment_name }}"
+          - "Image     : {{ image }}"
+          - "Service   : {{ service_name }}"
+          - "Ingress   : {{ ingress_name }}"
+          - "URL       : {{ application_url }}"
+          - "========================================"
