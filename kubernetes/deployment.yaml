@@ -1,0 +1,228 @@
+apiVersion: apps/v1
+kind: Deployment
+
+metadata:
+  name: abc-technologies
+  namespace: abc-technologies
+
+  labels:
+    app: abc-technologies
+    environment: production
+    managed-by: kubectl
+
+spec:
+
+  replicas: 2
+
+  revisionHistoryLimit: 10
+
+  strategy:
+    type: RollingUpdate
+
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+
+  selector:
+    matchLabels:
+      app: abc-technologies
+
+  template:
+
+    metadata:
+
+      labels:
+        app: abc-technologies
+        environment: production
+        managed-by: kubectl
+        version: v1
+
+    spec:
+
+###############################################################################
+# Service Account
+###############################################################################
+
+      serviceAccountName: abc-technologies-sa
+
+###############################################################################
+# Schedule Application Pods
+###############################################################################
+
+      nodeSelector:
+        role: app
+
+###############################################################################
+# Pod Anti Affinity
+###############################################################################
+
+      affinity:
+
+        podAntiAffinity:
+
+          preferredDuringSchedulingIgnoredDuringExecution:
+
+            - weight: 100
+
+              podAffinityTerm:
+
+                topologyKey: kubernetes.io/hostname
+
+                labelSelector:
+
+                  matchLabels:
+                    app: abc-technologies
+
+###############################################################################
+# Security Context
+###############################################################################
+
+      securityContext:
+
+        runAsNonRoot: true
+
+        runAsUser: 1000
+
+        runAsGroup: 1000
+
+        fsGroup: 1000
+
+###############################################################################
+# Termination
+###############################################################################
+
+      terminationGracePeriodSeconds: 30
+
+###############################################################################
+# Container
+###############################################################################
+
+      containers:
+
+        - name: abc-technologies
+
+          image: IMAGE_PLACEHOLDER
+
+          imagePullPolicy: Always
+
+###############################################################################
+# Container Port
+###############################################################################
+
+          ports:
+
+            - name: http
+
+              containerPort: 8080
+
+              protocol: TCP
+
+###############################################################################
+# ConfigMap
+###############################################################################
+
+          envFrom:
+
+            - configMapRef:
+
+                name: abc-technologies-config
+
+###############################################################################
+# Resources
+###############################################################################
+
+          resources:
+
+            requests:
+
+              cpu: "250m"
+
+              memory: "512Mi"
+
+            limits:
+
+              cpu: "1000m"
+
+              memory: "1024Mi"
+
+###############################################################################
+# Liveness Probe
+###############################################################################
+
+          livenessProbe:
+
+            httpGet:
+
+              path: /
+
+              port: 8080
+
+            initialDelaySeconds: 30
+
+            periodSeconds: 10
+
+            timeoutSeconds: 5
+
+            successThreshold: 1
+
+            failureThreshold: 3
+
+###############################################################################
+# Readiness Probe
+###############################################################################
+
+          readinessProbe:
+
+            httpGet:
+
+              path: /
+
+              port: 8080
+
+            initialDelaySeconds: 15
+
+            periodSeconds: 5
+
+            timeoutSeconds: 5
+
+            successThreshold: 1
+
+            failureThreshold: 3
+
+###############################################################################
+# Startup Probe
+###############################################################################
+
+          startupProbe:
+
+            httpGet:
+
+              path: /
+
+              port: 8080
+
+            periodSeconds: 10
+
+            timeoutSeconds: 5
+
+            successThreshold: 1
+
+            failureThreshold: 30
+
+###############################################################################
+# Graceful Shutdown
+###############################################################################
+
+          lifecycle:
+
+            preStop:
+
+              exec:
+
+                command:
+
+                  - /bin/sh
+
+                  - -c
+
+                  - sleep 15
